@@ -25,6 +25,7 @@ import { ControlValueAccessor, NG_VALUE_ACCESSOR } from '@angular/forms';
 import { fromEvent, Subject } from 'rxjs';
 import { takeUntil } from 'rxjs/operators';
 
+import { NzFormStatusService } from 'ng-zorro-antd/core/form';
 import { BooleanInput, NzSafeAny, OnChangeType, OnTouchedType } from 'ng-zorro-antd/core/types';
 import { InputBoolean } from 'ng-zorro-antd/core/util';
 
@@ -68,6 +69,7 @@ import { NzRadioService } from './radio.service';
     }
   ],
   host: {
+    '[class.ant-radio-wrapper-in-form-item]': '!!nzFormStatusService',
     '[class.ant-radio-wrapper]': '!isRadioButton',
     '[class.ant-radio-button-wrapper]': 'isRadioButton',
     '[class.ant-radio-wrapper-checked]': 'isChecked && !isRadioButton',
@@ -84,6 +86,7 @@ export class NzRadioComponent implements ControlValueAccessor, AfterViewInit, On
 
   private isNgModel = false;
   private destroy$ = new Subject<void>();
+  private isNzDisableFirstChange: boolean = true;
   isChecked = false;
   name: string | null = null;
   isRadioButton = !!this.nzRadioButtonDirective;
@@ -111,11 +114,13 @@ export class NzRadioComponent implements ControlValueAccessor, AfterViewInit, On
     private focusMonitor: FocusMonitor,
     @Optional() private directionality: Directionality,
     @Optional() @Inject(NzRadioService) private nzRadioService: NzRadioService | null,
-    @Optional() @Inject(NzRadioButtonDirective) private nzRadioButtonDirective: NzRadioButtonDirective | null
+    @Optional() @Inject(NzRadioButtonDirective) private nzRadioButtonDirective: NzRadioButtonDirective | null,
+    @Optional() public nzFormStatusService?: NzFormStatusService
   ) {}
 
   setDisabledState(disabled: boolean): void {
-    this.nzDisabled = disabled;
+    this.nzDisabled = (this.isNzDisableFirstChange && this.nzDisabled) || disabled;
+    this.isNzDisableFirstChange = false;
     this.cdr.markForCheck();
   }
 
@@ -140,7 +145,8 @@ export class NzRadioComponent implements ControlValueAccessor, AfterViewInit, On
         this.cdr.markForCheck();
       });
       this.nzRadioService.disabled$.pipe(takeUntil(this.destroy$)).subscribe(disabled => {
-        this.nzDisabled = disabled;
+        this.nzDisabled = (this.isNzDisableFirstChange && this.nzDisabled) || disabled;
+        this.isNzDisableFirstChange = false;
         this.cdr.markForCheck();
       });
       this.nzRadioService.selected$.pipe(takeUntil(this.destroy$)).subscribe(value => {

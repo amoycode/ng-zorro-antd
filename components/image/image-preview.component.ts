@@ -16,6 +16,7 @@ import {
   ViewChild,
   ViewEncapsulation
 } from '@angular/core';
+import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
 import { fromEvent } from 'rxjs';
 import { takeUntil } from 'rxjs/operators';
 
@@ -63,10 +64,10 @@ const initialPosition = {
           </ul>
           <div
             class="ant-image-preview-img-wrapper"
+            #imagePreviewWrapper
             cdkDrag
             [style.transform]="previewImageWrapperTransform"
             [cdkDragFreeDragPosition]="position"
-            (mousedown)="onDragStarted()"
             (cdkDragReleased)="onDragReleased()"
           >
             <ng-container *ngFor="let image of images; index as imageIndex">
@@ -75,7 +76,7 @@ const initialPosition = {
                 class="ant-image-preview-img"
                 #imgRef
                 *ngIf="index === imageIndex"
-                [attr.src]="image.src"
+                [attr.src]="sanitizerResourceUrl(image.src)"
                 [attr.srcset]="image.srcset"
                 [attr.alt]="image.alt"
                 [style.width]="image.width"
@@ -176,6 +177,7 @@ export class NzImagePreviewComponent implements OnInit {
   closeClick = new EventEmitter<void>();
 
   @ViewChild('imgRef') imageRef!: ElementRef<HTMLImageElement>;
+  @ViewChild('imagePreviewWrapper', { static: true }) imagePreviewWrapper!: ElementRef<HTMLElement>;
 
   private zoom: number;
   private rotate: number;
@@ -196,7 +198,8 @@ export class NzImagePreviewComponent implements OnInit {
     public nzConfigService: NzConfigService,
     public config: NzImagePreviewOptions,
     private overlayRef: OverlayRef,
-    private destroy$: NzDestroyService
+    private destroy$: NzDestroyService,
+    private sanitizer: DomSanitizer
   ) {
     this.zoom = this.config.nzZoom ?? 1;
     this.rotate = this.config.nzRotate ?? 0;
@@ -213,6 +216,12 @@ export class NzImagePreviewComponent implements OnInit {
           if (event.target === event.currentTarget && this.maskClosable && this.containerClick.observers.length) {
             this.ngZone.run(() => this.containerClick.emit());
           }
+        });
+
+      fromEvent(this.imagePreviewWrapper.nativeElement, 'mousedown')
+        .pipe(takeUntil(this.destroy$))
+        .subscribe(() => {
+          this.isDragging = true;
         });
     });
   }
@@ -319,10 +328,6 @@ export class NzImagePreviewComponent implements OnInit {
     this.cdr.markForCheck();
   }
 
-  onDragStarted(): void {
-    this.isDragging = true;
-  }
-
   onDragReleased(): void {
     this.isDragging = false;
     const width = this.imageRef.nativeElement.offsetWidth * this.zoom;
@@ -342,6 +347,10 @@ export class NzImagePreviewComponent implements OnInit {
     if (isNotNil(fitContentPos.x) || isNotNil(fitContentPos.y)) {
       this.position = { ...this.position, ...fitContentPos };
     }
+  }
+
+  sanitizerResourceUrl(url: string): SafeResourceUrl {
+    return this.sanitizer.bypassSecurityTrustResourceUrl(url);
   }
 
   private updatePreviewImageTransform(): void {

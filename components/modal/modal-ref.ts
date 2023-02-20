@@ -167,6 +167,9 @@ export class NzModalRef<T = NzSafeAny, R = NzSafeAny> implements NzModalLegacyAP
   }
 
   private async trigger(action: NzTriggerAction): Promise<void> {
+    if (this.state === NzModalState.CLOSING) {
+      return;
+    }
     const trigger = { ok: this.config.nzOnOk, cancel: this.config.nzOnCancel }[action];
     const loadingKey = { ok: 'nzOkLoading', cancel: 'nzCancelLoading' }[action] as 'nzOkLoading' | 'nzCancelLoading';
     const loading = this.config[loadingKey];
@@ -181,7 +184,7 @@ export class NzModalRef<T = NzSafeAny, R = NzSafeAny> implements NzModalLegacyAP
         this.config[loadingKey] = true;
         let doClose: boolean | void | {} = false;
         try {
-          doClose = await result;
+          doClose = (await result) as typeof result;
         } finally {
           this.config[loadingKey] = false;
           this.closeWhitResult(doClose);

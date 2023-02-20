@@ -4,7 +4,7 @@
  */
 
 import { Direction, Directionality } from '@angular/cdk/bidi';
-import { Platform } from '@angular/cdk/platform';
+import { normalizePassiveListenerOptions, Platform } from '@angular/cdk/platform';
 import { DOCUMENT } from '@angular/common';
 import {
   ChangeDetectionStrategy,
@@ -36,6 +36,8 @@ import { InputNumber } from 'ng-zorro-antd/core/util';
 
 const NZ_CONFIG_MODULE_NAME: NzConfigKey = 'backTop';
 
+const passiveEventListenerOptions = normalizePassiveListenerOptions({ passive: true });
+
 @Component({
   selector: 'nz-back-top',
   exportAs: 'nzBackTop',
@@ -45,7 +47,7 @@ const NZ_CONFIG_MODULE_NAME: NzConfigKey = 'backTop';
       <ng-template #defaultContent>
         <div class="ant-back-top-content">
           <div class="ant-back-top-icon">
-            <i nz-icon nzType="vertical-align-top"></i>
+            <span nz-icon nzType="vertical-align-top"></span>
           </div>
         </div>
       </ng-template>
@@ -138,7 +140,7 @@ export class NzBackTopComponent implements OnInit, OnDestroy, OnChanges {
     this.scrollListenerDestroy$.next();
     this.handleScroll();
     this.zone.runOutsideAngular(() => {
-      fromEvent(this.getTarget(), 'scroll')
+      fromEvent(this.getTarget(), 'scroll', <AddEventListenerOptions>passiveEventListenerOptions)
         .pipe(debounceTime(50), takeUntil(this.scrollListenerDestroy$))
         .subscribe(() => this.handleScroll());
     });

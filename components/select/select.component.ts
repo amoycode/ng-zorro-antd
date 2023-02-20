@@ -6,7 +6,12 @@
 import { FocusMonitor } from '@angular/cdk/a11y';
 import { Direction, Directionality } from '@angular/cdk/bidi';
 import { DOWN_ARROW, ENTER, ESCAPE, SPACE, TAB, UP_ARROW } from '@angular/cdk/keycodes';
-import { CdkConnectedOverlay, CdkOverlayOrigin, ConnectedOverlayPositionChange } from '@angular/cdk/overlay';
+import {
+  CdkConnectedOverlay,
+  CdkOverlayOrigin,
+  ConnectedOverlayPositionChange,
+  ConnectionPositionPair
+} from '@angular/cdk/overlay';
 import { Platform } from '@angular/cdk/platform';
 import {
   AfterContentInit,
@@ -26,27 +31,44 @@ import {
   Optional,
   Output,
   QueryList,
+  Renderer2,
   SimpleChanges,
   TemplateRef,
   ViewChild,
   ViewEncapsulation
 } from '@angular/core';
 import { ControlValueAccessor, NG_VALUE_ACCESSOR } from '@angular/forms';
-import { BehaviorSubject, combineLatest, fromEvent, merge } from 'rxjs';
-import { startWith, switchMap, takeUntil } from 'rxjs/operators';
+import { BehaviorSubject, combineLatest, fromEvent, merge, of as observableOf } from 'rxjs';
+import { distinctUntilChanged, map, startWith, switchMap, takeUntil, withLatestFrom } from 'rxjs/operators';
 
 import { slideMotion } from 'ng-zorro-antd/core/animation';
 import { NzConfigKey, NzConfigService, WithConfig } from 'ng-zorro-antd/core/config';
+import { NzFormNoStatusService, NzFormStatusService } from 'ng-zorro-antd/core/form';
 import { NzNoAnimationDirective } from 'ng-zorro-antd/core/no-animation';
+import { getPlacementName, POSITION_MAP, POSITION_TYPE } from 'ng-zorro-antd/core/overlay';
 import { cancelRequestAnimationFrame, reqAnimFrame } from 'ng-zorro-antd/core/polyfill';
 import { NzDestroyService } from 'ng-zorro-antd/core/services';
-import { BooleanInput, NzSafeAny, OnChangeType, OnTouchedType } from 'ng-zorro-antd/core/types';
-import { InputBoolean, isNotNil } from 'ng-zorro-antd/core/util';
+import {
+  BooleanInput,
+  NgClassInterface,
+  NzSafeAny,
+  NzStatus,
+  NzValidateStatus,
+  OnChangeType,
+  OnTouchedType
+} from 'ng-zorro-antd/core/types';
+import { getStatusClassNames, InputBoolean, isNotNil } from 'ng-zorro-antd/core/util';
 
 import { NzOptionGroupComponent } from './option-group.component';
 import { NzOptionComponent } from './option.component';
 import { NzSelectTopControlComponent } from './select-top-control.component';
-import { NzFilterOptionType, NzSelectItemInterface, NzSelectModeType, NzSelectOptionInterface } from './select.types';
+import {
+  NzFilterOptionType,
+  NzSelectItemInterface,
+  NzSelectModeType,
+  NzSelectOptionInterface,
+  NzSelectPlacementType
+} from './select.types';
 
 const defaultFilterOption: NzFilterOptionType = (searchValue: string, item: NzSelectItemInterface): boolean => {
   if (item && item.nzLabel) {
@@ -83,7 +105,7 @@ export type NzSelectSizeType = 'large' | 'default' | 'small';
       [open]="nzOpen"
       [disabled]="nzDisabled"
       [mode]="nzMode"
-      [@.disabled]="noAnimation?.nzNoAnimation"
+      [@.disabled]="!!noAnimation?.nzNoAnimation"
       [nzNoAnimation]="noAnimation?.nzNoAnimation"
       [maxTagPlaceholder]="nzMaxTagPlaceholder"
       [removeIcon]="nzRemoveIcon"
@@ -100,11 +122,18 @@ export type NzSelectSizeType = 'large' | 'default' | 'small';
       (keydown)="onKeyDown($event)"
     ></nz-select-top-control>
     <nz-select-arrow
-      *ngIf="nzShowArrow"
+      *ngIf="nzShowArrow || (hasFeedback && !!status)"
+      [showArrow]="nzShowArrow"
       [loading]="nzLoading"
       [search]="nzOpen && nzShowSearch"
       [suffixIcon]="nzSuffixIcon"
-    ></nz-select-arrow>
+      [feedbackIcon]="feedbackIconTpl"
+    >
+      <ng-template #feedbackIconTpl>
+        <nz-form-item-feedback-icon *ngIf="hasFeedback && !!status" [status]="status"></nz-form-item-feedback-icon>
+      </ng-template>
+    </nz-select-arrow>
+
     <nz-select-clear
       *ngIf="nzAllowClear && !nzDisabled && listOfValue.length"
       [clearIcon]="nzClearIcon"
@@ -120,6 +149,7 @@ export type NzSelectSizeType = 'large' | 'default' | 'small';
       [cdkConnectedOverlayTransformOriginOn]="'.ant-select-dropdown'"
       [cdkConnectedOverlayPanelClass]="nzDropdownClassName!"
       [cdkConnectedOverlayOpen]="nzOpen"
+      [cdkConnectedOverlayPositions]="positions"
       (overlayOutsideClick)="onClickOutside($event)"
       (detach)="setOpenState(false)"
       (positionChange)="onPositionChange($event)"
@@ -129,10 +159,12 @@ export type NzSelectSizeType = 'large' | 'default' | 'small';
         [itemSize]="nzOptionHeightPx"
         [maxItemLength]="nzOptionOverflowSize"
         [matchWidth]="nzDropdownMatchSelectWidth"
-        [class.ant-select-dropdown-placement-bottomLeft]="dropDownPosition === 'bottom'"
-        [class.ant-select-dropdown-placement-topLeft]="dropDownPosition === 'top'"
+        [class.ant-select-dropdown-placement-bottomLeft]="dropDownPosition === 'bottomLeft'"
+        [class.ant-select-dropdown-placement-topLeft]="dropDownPosition === 'topLeft'"
+        [class.ant-select-dropdown-placement-bottomRight]="dropDownPosition === 'bottomRight'"
+        [class.ant-select-dropdown-placement-topRight]="dropDownPosition === 'topRight'"
         [@slideMotion]="'enter'"
-        [@.disabled]="noAnimation?.nzNoAnimation"
+        [@.disabled]="!!noAnimation?.nzNoAnimation"
         [nzNoAnimation]="noAnimation?.nzNoAnimation"
         [listOfContainerItem]="listOfContainerItem"
         [menuItemSelectedIcon]="nzMenuItemSelectedIcon"
@@ -150,6 +182,7 @@ export type NzSelectSizeType = 'large' | 'default' | 'small';
   `,
   host: {
     class: 'ant-select',
+    '[class.ant-select-in-form-item]': '!!nzFormStatusService',
     '[class.ant-select-lg]': 'nzSize === "large"',
     '[class.ant-select-sm]': 'nzSize === "small"',
     '[class.ant-select-show-arrow]': `nzShowArrow`,
@@ -179,13 +212,15 @@ export class NzSelectComponent implements ControlValueAccessor, OnInit, AfterCon
 
   @Input() nzId: string | null = null;
   @Input() nzSize: NzSelectSizeType = 'default';
+  @Input() nzStatus: NzStatus = '';
   @Input() nzOptionHeightPx = 32;
   @Input() nzOptionOverflowSize = 8;
-  @Input() nzDropdownClassName: string | null = null;
+  @Input() nzDropdownClassName: string[] | string | null = null;
   @Input() nzDropdownMatchSelectWidth = true;
   @Input() nzDropdownStyle: { [key: string]: string } | null = null;
   @Input() nzNotFoundContent: string | TemplateRef<NzSafeAny> | undefined = undefined;
   @Input() nzPlaceHolder: string | TemplateRef<NzSafeAny> | null = null;
+  @Input() nzPlacement: NzSelectPlacementType | null = null;
   @Input() nzMaxTagCount = Infinity;
   @Input() nzDropdownRender: TemplateRef<NzSafeAny> | null = null;
   @Input() nzCustomTemplate: TemplateRef<{ $implicit: NzSelectItemInterface }> | null = null;
@@ -210,6 +245,7 @@ export class NzSelectComponent implements ControlValueAccessor, OnInit, AfterCon
   @Input() @InputBoolean() nzServerSearch = false;
   @Input() @InputBoolean() nzDisabled = false;
   @Input() @InputBoolean() nzOpen = false;
+  @Input() @InputBoolean() nzSelectOnTab = false;
   @Input() @WithConfig<boolean>() @InputBoolean() nzBackdrop = false;
   @Input() nzOptions: NzSelectOptionInterface[] = [];
 
@@ -243,9 +279,10 @@ export class NzSelectComponent implements ControlValueAccessor, OnInit, AfterCon
   private value: NzSafeAny | NzSafeAny[];
   private _nzShowArrow: boolean | undefined;
   private requestId: number = -1;
+  private isNzDisableFirstChange: boolean = true;
   onChange: OnChangeType = () => {};
   onTouched: OnTouchedType = () => {};
-  dropDownPosition: 'top' | 'center' | 'bottom' = 'bottom';
+  dropDownPosition: NzSelectPlacementType = 'bottomLeft';
   triggerWidth: number | null = null;
   listOfContainerItem: NzSelectItemInterface[] = [];
   listOfTopItem: NzSelectItemInterface[] = [];
@@ -253,6 +290,13 @@ export class NzSelectComponent implements ControlValueAccessor, OnInit, AfterCon
   listOfValue: NzSafeAny[] = [];
   focused = false;
   dir: Direction = 'ltr';
+  positions: ConnectionPositionPair[] = [];
+
+  // status
+  prefixCls: string = 'ant-select';
+  statusCls: NgClassInterface = {};
+  status: NzValidateStatus = '';
+  hasFeedback: boolean = false;
 
   generateTagItem(value: string): NzSelectItemInterface {
     return {
@@ -313,6 +357,7 @@ export class NzSelectComponent implements ControlValueAccessor, OnInit, AfterCon
     }
     const activatedItem =
       listOfContainerItem.find(item => item.nzLabel === this.searchValue) ||
+      listOfContainerItem.find(item => this.compareWith(item.nzValue, this.activatedValue)) ||
       listOfContainerItem.find(item => this.compareWith(item.nzValue, this.listOfValue[0])) ||
       listOfContainerItem[0];
     this.activatedValue = (activatedItem && activatedItem.nzValue) || null;
@@ -407,7 +452,7 @@ export class NzSelectComponent implements ControlValueAccessor, OnInit, AfterCon
       case ENTER:
         e.preventDefault();
         if (this.nzOpen) {
-          if (isNotNil(this.activatedValue)) {
+          if (isNotNil(this.activatedValue) && activatedIndex !== -1) {
             this.onItemClick(this.activatedValue);
           }
         } else {
@@ -421,7 +466,16 @@ export class NzSelectComponent implements ControlValueAccessor, OnInit, AfterCon
         }
         break;
       case TAB:
-        this.setOpenState(false);
+        if (this.nzSelectOnTab) {
+          if (this.nzOpen) {
+            e.preventDefault();
+            if (isNotNil(this.activatedValue)) {
+              this.onItemClick(this.activatedValue);
+            }
+          }
+        } else {
+          this.setOpenState(false);
+        }
         break;
       case ESCAPE:
         /**
@@ -475,7 +529,8 @@ export class NzSelectComponent implements ControlValueAccessor, OnInit, AfterCon
   }
 
   onPositionChange(position: ConnectedOverlayPositionChange): void {
-    this.dropDownPosition = position.connectionPair.originY;
+    const placement = getPlacementName(position);
+    this.dropDownPosition = placement as NzSelectPlacementType;
   }
 
   updateCdkConnectedOverlayStatus(): void {
@@ -508,10 +563,13 @@ export class NzSelectComponent implements ControlValueAccessor, OnInit, AfterCon
     public nzConfigService: NzConfigService,
     private cdr: ChangeDetectorRef,
     private host: ElementRef<HTMLElement>,
+    private renderer: Renderer2,
     private platform: Platform,
     private focusMonitor: FocusMonitor,
     @Optional() private directionality: Directionality,
-    @Host() @Optional() public noAnimation?: NzNoAnimationDirective
+    @Host() @Optional() public noAnimation?: NzNoAnimationDirective,
+    @Optional() public nzFormStatusService?: NzFormStatusService,
+    @Optional() private nzFormNoStatusService?: NzFormNoStatusService
   ) {}
 
   writeValue(modelValue: NzSafeAny | NzSafeAny[]): void {
@@ -543,15 +601,16 @@ export class NzSelectComponent implements ControlValueAccessor, OnInit, AfterCon
   }
 
   setDisabledState(disabled: boolean): void {
-    this.nzDisabled = disabled;
-    if (disabled) {
+    this.nzDisabled = (this.isNzDisableFirstChange && this.nzDisabled) || disabled;
+    this.isNzDisableFirstChange = false;
+    if (this.nzDisabled) {
       this.setOpenState(false);
     }
     this.cdr.markForCheck();
   }
 
   ngOnChanges(changes: SimpleChanges): void {
-    const { nzOpen, nzDisabled, nzOptions } = changes;
+    const { nzOpen, nzDisabled, nzOptions, nzStatus, nzPlacement } = changes;
     if (nzOpen) {
       this.onOpenChange();
     }
@@ -576,9 +635,35 @@ export class NzSelectComponent implements ControlValueAccessor, OnInit, AfterCon
       });
       this.listOfTemplateItem$.next(listOfTransformedItem);
     }
+    if (nzStatus) {
+      this.setStatusStyles(this.nzStatus, this.hasFeedback);
+    }
+    if (nzPlacement) {
+      const { currentValue } = nzPlacement;
+      this.dropDownPosition = currentValue as NzSelectPlacementType;
+      const listOfPlacement = ['bottomLeft', 'topLeft', 'bottomRight', 'topRight'];
+      if (currentValue && listOfPlacement.includes(currentValue)) {
+        this.positions = [POSITION_MAP[currentValue as POSITION_TYPE]];
+      } else {
+        this.positions = listOfPlacement.map(e => POSITION_MAP[e as POSITION_TYPE]);
+      }
+    }
   }
 
   ngOnInit(): void {
+    this.nzFormStatusService?.formStatusChanges
+      .pipe(
+        distinctUntilChanged((pre, cur) => {
+          return pre.status === cur.status && pre.hasFeedback === cur.hasFeedback;
+        }),
+        withLatestFrom(this.nzFormNoStatusService ? this.nzFormNoStatusService.noFormStatus : observableOf(false)),
+        map(([{ status, hasFeedback }, noStatus]) => ({ status: noStatus ? '' : status, hasFeedback })),
+        takeUntil(this.destroy$)
+      )
+      .subscribe(({ status, hasFeedback }) => {
+        this.setStatusStyles(status, hasFeedback);
+      });
+
     this.focusMonitor
       .monitor(this.host, true)
       .pipe(takeUntil(this.destroy$))
@@ -694,5 +779,20 @@ export class NzSelectComponent implements ControlValueAccessor, OnInit, AfterCon
   ngOnDestroy(): void {
     cancelRequestAnimationFrame(this.requestId);
     this.focusMonitor.stopMonitoring(this.host);
+  }
+
+  private setStatusStyles(status: NzValidateStatus, hasFeedback: boolean): void {
+    this.status = status;
+    this.hasFeedback = hasFeedback;
+    this.cdr.markForCheck();
+    // render status if nzStatus is set
+    this.statusCls = getStatusClassNames(this.prefixCls, status, hasFeedback);
+    Object.keys(this.statusCls).forEach(status => {
+      if (this.statusCls[status]) {
+        this.renderer.addClass(this.host.nativeElement, status);
+      } else {
+        this.renderer.removeClass(this.host.nativeElement, status);
+      }
+    });
   }
 }

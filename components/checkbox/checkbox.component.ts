@@ -26,6 +26,7 @@ import { ControlValueAccessor, NG_VALUE_ACCESSOR } from '@angular/forms';
 import { fromEvent, Subject } from 'rxjs';
 import { takeUntil } from 'rxjs/operators';
 
+import { NzFormStatusService } from 'ng-zorro-antd/core/form';
 import { BooleanInput, NzSafeAny, OnChangeType, OnTouchedType } from 'ng-zorro-antd/core/types';
 import { InputBoolean } from 'ng-zorro-antd/core/util';
 
@@ -68,6 +69,7 @@ import { NzCheckboxWrapperComponent } from './checkbox-wrapper.component';
   ],
   host: {
     class: 'ant-checkbox-wrapper',
+    '[class.ant-checkbox-wrapper-in-form-item]': '!!nzFormStatusService',
     '[class.ant-checkbox-wrapper-checked]': 'nzChecked',
     '[class.ant-checkbox-rtl]': `dir === 'rtl'`
   }
@@ -80,6 +82,7 @@ export class NzCheckboxComponent implements OnInit, ControlValueAccessor, OnDest
 
   dir: Direction = 'ltr';
   private destroy$ = new Subject<void>();
+  private isNzDisableFirstChange: boolean = true;
 
   onChange: OnChangeType = () => {};
   onTouched: OnTouchedType = () => {};
@@ -117,7 +120,8 @@ export class NzCheckboxComponent implements OnInit, ControlValueAccessor, OnDest
   }
 
   setDisabledState(disabled: boolean): void {
-    this.nzDisabled = disabled;
+    this.nzDisabled = (this.isNzDisableFirstChange && this.nzDisabled) || disabled;
+    this.isNzDisableFirstChange = false;
     this.cdr.markForCheck();
   }
 
@@ -135,7 +139,8 @@ export class NzCheckboxComponent implements OnInit, ControlValueAccessor, OnDest
     @Optional() private nzCheckboxWrapperComponent: NzCheckboxWrapperComponent,
     private cdr: ChangeDetectorRef,
     private focusMonitor: FocusMonitor,
-    @Optional() private directionality: Directionality
+    @Optional() private directionality: Directionality,
+    @Optional() public nzFormStatusService?: NzFormStatusService
   ) {}
 
   ngOnInit(): void {
